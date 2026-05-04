@@ -3,7 +3,6 @@ import time
 import subprocess
 import requests
 from bs4 import BeautifulSoup
-import os
 import re
 
 URL = "https://results.eci.gov.in/ResultAcGenMay2026/index.htm"
@@ -14,6 +13,18 @@ DRAW_INTERVAL = 0.5
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64)",
 }
+
+# ---- hardcoded truth ----
+STATES = [
+    ("Assam", 126),
+    ("Kerala", 140),
+    ("Puducherry", 30),
+    ("Tamil Nadu", 234),
+    ("West Bengal", 294),
+]
+
+# precompute majority
+STATES = [(name, total, total // 2 + 1) for name, total in STATES]
 
 
 def fetch_html():
@@ -33,46 +44,33 @@ def fetch_html():
         return None
 
 
-# -------- robust seat extraction (no HTML dependency) --------
-def extract_seats(box):
+# ---- only extract FIRST number (counted seats) ----
+def extract_counted(box):
     text = box.get_text(" ", strip=True)
 
-    # case: 183/294
-    m = re.search(r'(\d+)\s*/\s*(\d+)', text)
+    # first number = counted seats
+    m = re.search(r'\d+', text)
     if m:
-        return int(m.group(1)), int(m.group(2))
+        return int(m.group(0))
 
-    # case: 294
-    m = re.search(r'Assembly Constituencies\s*(\d+)', text)
-    if m:
-        val = int(m.group(1))
-        return val, val
-
-    return 0, 0
+    return 0
 
 
 def parse(html):
     soup = BeautifulSoup(html, "html.parser")
     result = []
 
-    for box in soup.select(".asmb-box"):
-        # ---- state name ----
-        img = box.select_one(".asmb-title img")
-        state = "Unknown"
+    boxes = soup.select(".asmb-box")
 
-        if img:
-            if img.has_attr("alt") and img["alt"].strip():
-                state = img["alt"].strip()
-            else:
-                src = img.get("src", "")
-                name = os.path.basename(src).replace(".svg", "")
-                state = name.replace("-", " ").title()
+    for idx, box in enumerate(boxes):
+        if idx >= len(STATES):
+            break
 
-        # ---- seats (robust) ----
-        counted, total = extract_seats(box)
-        majority = total // 2 + 1 if total else 0
+        state, total, majority = STATES[idx]
 
-        # ---- parties (still stable) ----
+        counted = extract_counted(box)
+
+        # ---- parties ----
         parties = []
         for row in box.select(".pr-row"):
             cols = row.find_all("div")
