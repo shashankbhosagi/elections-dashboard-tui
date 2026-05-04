@@ -4,6 +4,7 @@ import subprocess
 import requests
 from bs4 import BeautifulSoup
 import os
+import re
 
 URL = "https://results.eci.gov.in/ResultAcGenMay2026/index.htm"
 
@@ -32,6 +33,24 @@ def fetch_html():
         return None
 
 
+# -------- robust seat extraction (no HTML dependency) --------
+def extract_seats(box):
+    text = box.get_text(" ", strip=True)
+
+    # case: 183/294
+    m = re.search(r'(\d+)\s*/\s*(\d+)', text)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+
+    # case: 294
+    m = re.search(r'Assembly Constituencies\s*(\d+)', text)
+    if m:
+        val = int(m.group(1))
+        return val, val
+
+    return 0, 0
+
+
 def parse(html):
     soup = BeautifulSoup(html, "html.parser")
     result = []
@@ -49,33 +68,11 @@ def parse(html):
                 name = os.path.basename(src).replace(".svg", "")
                 state = name.replace("-", " ").title()
 
-        # ---- seats (counted/total or total only) ----
-        total = 0
-        counted = 0
-
-        label = box.find("span", string=lambda s: s and "Assembly Constituencies" in s)
-        if label:
-            parent = label.find_parent("li")
-            spans = parent.find_all("span")
-
-            if len(spans) >= 2:
-                raw = spans[1].text.strip()
-
-                if "/" in raw:
-                    try:
-                        counted, total = map(int, raw.split("/"))
-                    except:
-                        counted, total = 0, 0
-                else:
-                    try:
-                        total = int(raw)
-                        counted = total
-                    except:
-                        total, counted = 0, 0
-
+        # ---- seats (robust) ----
+        counted, total = extract_seats(box)
         majority = total // 2 + 1 if total else 0
 
-        # ---- parties ----
+        # ---- parties (still stable) ----
         parties = []
         for row in box.select(".pr-row"):
             cols = row.find_all("div")
@@ -110,7 +107,7 @@ def draw(stdscr, data, last_update):
     stdscr.addstr(0, 0, "Election TUI | r=refresh q=quit")
     stdscr.addstr(1, 0, f"Last update: {last_update}")
 
-    col_width = 34
+    col_width = 36
     cols = max(1, w // col_width)
 
     y_offset = 3
@@ -125,11 +122,9 @@ def draw(stdscr, data, last_update):
         if y >= h - 2:
             break
 
-        # ---- header ----
         stdscr.addstr(y, x, f"[{state}]")
         stdscr.addstr(y + 1, x, f"Seats:{counted}/{total} Maj:{majority}")
 
-        # ---- parties ----
         for i, (p, l, w_) in enumerate(parties[:5]):
             if y + i + 2 >= h:
                 break
