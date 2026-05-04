@@ -8,7 +8,7 @@ import os
 URL = "https://results.eci.gov.in/ResultAcGenMay2026/index.htm"
 
 REFRESH_INTERVAL = 180
-DRAW_INTERVAL = 0.1
+DRAW_INTERVAL = 0.5
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64)",
@@ -49,18 +49,29 @@ def parse(html):
                 name = os.path.basename(src).replace(".svg", "")
                 state = name.replace("-", " ").title()
 
-        # ---- total seats ----
+        # ---- seats (counted/total or total only) ----
         total = 0
+        counted = 0
 
-        li = box.find("span", string=lambda s: s and "Assembly Constituencies" in s)
-        if li:
-          parent = li.find_parent("li")
-          spans = parent.find_all("span")
-          if len(spans) >= 2:
-            try:
-              total = int(spans[1].text.strip())
-            except:
-              total = 0
+        label = box.find("span", string=lambda s: s and "Assembly Constituencies" in s)
+        if label:
+            parent = label.find_parent("li")
+            spans = parent.find_all("span")
+
+            if len(spans) >= 2:
+                raw = spans[1].text.strip()
+
+                if "/" in raw:
+                    try:
+                        counted, total = map(int, raw.split("/"))
+                    except:
+                        counted, total = 0, 0
+                else:
+                    try:
+                        total = int(raw)
+                        counted = total
+                    except:
+                        total, counted = 0, 0
 
         majority = total // 2 + 1 if total else 0
 
@@ -69,13 +80,18 @@ def parse(html):
         for row in box.select(".pr-row"):
             cols = row.find_all("div")
             if len(cols) >= 3:
-                parties.append(
-                    (cols[0].text.strip(),
-                     int(cols[1].text.strip()),
-                     int(cols[2].text.strip()))
-                )
+                try:
+                    parties.append(
+                        (
+                            cols[0].text.strip(),
+                            int(cols[1].text.strip()),
+                            int(cols[2].text.strip()),
+                        )
+                    )
+                except:
+                    continue
 
-        result.append((state, total, majority, parties))
+        result.append((state, total, counted, majority, parties))
 
     return result
 
@@ -83,7 +99,7 @@ def parse(html):
 def fetch_data():
     html = fetch_html()
     if not html:
-        return [("ERROR", 0, 0, [("fetch failed", 0, 0)])]
+        return [("ERROR", 0, 0, 0, [("fetch failed", 0, 0)])]
     return parse(html)
 
 
@@ -99,7 +115,7 @@ def draw(stdscr, data, last_update):
 
     y_offset = 3
 
-    for idx, (state, total, majority, parties) in enumerate(data):
+    for idx, (state, total, counted, majority, parties) in enumerate(data):
         col = idx % cols
         row = idx // cols
 
@@ -109,18 +125,18 @@ def draw(stdscr, data, last_update):
         if y >= h - 2:
             break
 
-        # header
+        # ---- header ----
         stdscr.addstr(y, x, f"[{state}]")
-        stdscr.addstr(y + 1, x, f"(TOTAL:{total} TO_WIN:{majority})")
+        stdscr.addstr(y + 1, x, f"Seats:{counted}/{total} Maj:{majority}")
 
-        # parties
+        # ---- parties ----
         for i, (p, l, w_) in enumerate(parties[:5]):
             if y + i + 2 >= h:
                 break
-            line = f"{p[:10]:<10} L:{l:>3} W:{w_:>3}"
-            stdscr.addstr(y + i + 2, x, line)
+            stdscr.addstr(y + i + 2, x, f"{p[:10]:<10} L:{l:>3} W:{w_:>3}")
 
-    stdscr.refresh()
+    stdscr.noutrefresh()
+    curses.doupdate()
 
 
 def main(stdscr):
